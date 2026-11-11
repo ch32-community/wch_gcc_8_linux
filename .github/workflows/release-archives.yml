@@ -37,7 +37,9 @@ jobs:
           SOURCE_DIRECTORY: ${{ matrix.directory }}
           ARCHIVE_NAME: ${{ matrix.archive }}
         run: |
-          tar -czf "${RUNNER_TEMP}/${ARCHIVE_NAME}.tar.gz" -- "$SOURCE_DIRECTORY"
+          archive_directory="${ARCHIVE_NAME%_x86_64-linux-gnu}"
+          mv -- "$SOURCE_DIRECTORY" "$archive_directory"
+          zip -r "${RUNNER_TEMP}/${ARCHIVE_NAME}.zip" "$archive_directory"
 
       - name: Attach archive to release
         shell: bash
@@ -47,4 +49,29 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           ARCHIVE_NAME: ${{ matrix.archive }}
         run: |
-          gh release upload "$RELEASE_TAG" "${RUNNER_TEMP}/${ARCHIVE_NAME}.tar.gz" --clobber
+          gh release upload "$RELEASE_TAG" "${RUNNER_TEMP}/${ARCHIVE_NAME}.zip" --clobber
+
+      - name: Write archive summary
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ARCHIVE_NAME: ${{ matrix.archive }}
+        run: |
+          archive_file="${ARCHIVE_NAME}.zip"
+          archive_path="${RUNNER_TEMP}/${archive_file}"
+          checksum=$(sha256sum "$archive_path" | cut -d ' ' -f 1 | tr '[:lower:]' '[:upper:]')
+          size=$(stat -c '%s' "$archive_path")
+          encoded_tag=$(jq -rn --arg tag "$RELEASE_TAG" '$tag | @uri')
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${encoded_tag}/${archive_file}"
+
+          {
+            printf '### %s\n\n```json\n' "$archive_file"
+            jq -n \
+              --arg host "x86_64-linux-gnu" \
+              --arg url "$url" \
+              --arg archiveFileName "$archive_file" \
+              --arg checksum "SHA-256:${checksum}" \
+              --arg size "$size" \
+              '{host: $host, url: $url, archiveFileName: $archiveFileName, checksum: $checksum, size: $size}'
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
